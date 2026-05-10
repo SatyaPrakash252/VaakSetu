@@ -11,7 +11,7 @@ export default function DatabaseViewer() {
 
   const fetchTables = useCallback(async () => {
     try {
-      const res = await fetch('/api/db/tables')
+      const res = await fetch(API_BASE + '/api/db/tables')
       const data = await res.json()
       setTables(data.tables || [])
       setDbInfo({ path: data.db_path, size: data.db_size_kb })

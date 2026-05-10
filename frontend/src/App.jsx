@@ -9,6 +9,7 @@ import Demo from './pages/Demo'
 import DatabaseViewer from './pages/DatabaseViewer'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useCallState } from './hooks/useCallState'
+const API_BASE = window.location.hostname === 'localhost' ? '' : 'https://vaaksetu-xluf.onrender.com';
 
 export default function App() {
   const navigate = useNavigate()
@@ -43,7 +44,7 @@ export default function App() {
 
   const handleVerify = useCallback(async (callId, confirmed, corrections) => {
     try {
-      await fetch('/api/verify', {
+      await fetch(API_BASE + '/api/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ call_id: callId, confirmed, partial_corrections: corrections })

@@ -20,7 +20,7 @@ export default function AudioTest({ processResult }) {
     setResult(null)
     try {
       // Start a call first
-      const callRes = await fetch('/api/calls/start', {
+      const callRes = await fetch(API_BASE + '/api/calls/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caller_number: callerId, agent_id: 'TEST-AGENT', language_hint: textLang === 'auto' ? null : textLang })
@@ -28,7 +28,7 @@ export default function AudioTest({ processResult }) {
       const call = await callRes.json()
 
       // Process audio through full pipeline
-      const procRes = await fetch('/api/process', {
+      const procRes = await fetch(API_BASE + '/api/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -53,13 +53,13 @@ export default function AudioTest({ processResult }) {
     setError(null)
     setResult(null)
     try {
-      const callRes = await fetch('/api/calls/start', {
+      const callRes = await fetch(API_BASE + '/api/calls/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caller_number: '+910000000000', agent_id: 'TEST-AGENT', language_hint: textLang === 'auto' ? null : textLang })
       })
       const call = await callRes.json()
-      const procRes = await fetch('/api/process', {
+      const procRes = await fetch(API_BASE + '/api/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ call_id: call.call_id, text: textInput, language: textLang })
