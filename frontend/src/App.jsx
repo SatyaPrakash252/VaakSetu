@@ -9,7 +9,7 @@ import Demo from './pages/Demo'
 import DatabaseViewer from './pages/DatabaseViewer'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useCallState } from './hooks/useCallState'
-const API_BASE = window.location.hostname === 'localhost' ? '' : 'https://vaaksetu-xluf.onrender.com';
+import { API_BASE } from './config'
 
 export default function App() {
   const navigate = useNavigate()
@@ -25,7 +25,7 @@ export default function App() {
 
   const runScenario = useCallback(async (id) => {
     try {
-      const res = await fetch(`/api/demo/scenario/${id}`, { method: 'POST' })
+      const res = await fetch(API_BASE + `/api/demo/scenario/${id}`, { method: 'POST' })
       const data = await res.json()
       processResult(data.result)
       navigate('/')
@@ -38,7 +38,7 @@ export default function App() {
   const handleTakeover = useCallback(async (callId) => {
     setTakeover(prev => !prev)
     try {
-      await fetch(`/api/calls/${callId}/takeover`, { method: 'POST' })
+      await fetch(API_BASE + `/api/calls/${callId}/takeover`, { method: 'POST' })
     } catch {}
   }, [])
 

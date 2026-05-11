@@ -2,11 +2,11 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://vaaksetu-xluf.onrender.com/api/$1"
+      "destination": "https://vaaksetu-x1uf.onrender.com/api/$1"
     },
     {
       "source": "/ws/(.*)",
-      "destination": "wss://vaaksetu-xluf.onrender.com/ws/$1"
+      "destination": "wss://vaaksetu-x1uf.onrender.com/ws/$1"
     },
     {
       "source": "/(.*)",

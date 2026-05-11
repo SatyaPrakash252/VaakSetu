@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import { API_BASE } from '../config'
 
 export default function AudioTest({ processResult }) {
   const [mode, setMode] = useState(null) // 'upload' | 'record' | null

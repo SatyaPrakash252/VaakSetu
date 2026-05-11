@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { API_BASE } from '../config'
 
 export default function DatabaseViewer() {
   const [tables, setTables] = useState([])
@@ -23,7 +24,7 @@ export default function DatabaseViewer() {
   const fetchRows = useCallback(async (tableName) => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/db/table/${tableName}?limit=100`)
+      const res = await fetch(API_BASE + `/api/db/table/${tableName}?limit=100`)
       const data = await res.json()
       setRows(data.rows || [])
       setTotalRows(data.total || 0)
