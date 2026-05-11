@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { WS_URL } from '../config'
+import { WS_URL, API_BASE } from '../config'
 
 export function useWebSocket() {
   const [messages, setMessages] = useState([])
@@ -8,37 +8,44 @@ export function useWebSocket() {
   const reconnectTimer = useRef(null)
 
   const connect = useCallback(() => {
-    try {
-      const ws = new WebSocket(WS_URL)
-      wsRef.current = ws
+    // Wake up the Render backend first (free tier sleeps after inactivity)
+    const wakeUp = API_BASE
+      ? fetch(API_BASE + '/health').catch(() => {})
+      : Promise.resolve();
 
-      ws.onopen = () => {
-        setConnected(true)
-        console.log('WebSocket connected')
-      }
+    wakeUp.then(() => {
+      try {
+        const ws = new WebSocket(WS_URL)
+        wsRef.current = ws
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          setMessages(prev => [...prev, data])
-        } catch (e) {
-          console.warn('WS parse error:', e)
+        ws.onopen = () => {
+          setConnected(true)
+          console.log('WebSocket connected')
         }
-      }
 
-      ws.onclose = () => {
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            setMessages(prev => [...prev, data])
+          } catch (e) {
+            console.warn('WS parse error:', e)
+          }
+        }
+
+        ws.onclose = () => {
+          setConnected(false)
+          // Auto-reconnect after 3s
+          reconnectTimer.current = setTimeout(connect, 3000)
+        }
+
+        ws.onerror = () => {
+          setConnected(false)
+        }
+      } catch (e) {
         setConnected(false)
-        // Auto-reconnect after 3s
         reconnectTimer.current = setTimeout(connect, 3000)
       }
-
-      ws.onerror = () => {
-        setConnected(false)
-      }
-    } catch (e) {
-      setConnected(false)
-      reconnectTimer.current = setTimeout(connect, 3000)
-    }
+    })
   }, [])
 
   useEffect(() => {
