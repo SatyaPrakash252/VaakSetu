@@ -1,4 +1,4 @@
-# VaakSetu 🌉
+# VaakSet 🌉
 
 ### Real-Time Dialect-Aware Voice AI with Multi-Signal Threat Detection for 1092 Helpline
 
