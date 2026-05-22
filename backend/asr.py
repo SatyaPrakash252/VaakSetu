@@ -3,7 +3,7 @@ VaakSetu — ASR Engine (Multi-backend)
 Priority: OpenAI Whisper → SpeechRecognition (Google free) → Error
 Handles Kannada, Hindi, English, and code-mixed speech
 """
-import os, time, base64, tempfile, logging, subprocess
+import os, time, base64, tempfile, logging, subprocess, asyncio
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger("vaaksetu.asr")
@@ -258,11 +258,36 @@ class ASREngine:
             candidates = []  # List of (text, lang, confidence, script, script_valid)
             all_transcripts = {}
 
-            for api_lang, our_lang in langs_to_try:
+            # Define a helper function to perform the blocking network call
+            def _recognize_single(api_lang: str, our_lang: str):
                 try:
-                    result = recognizer.recognize_google(
+                    res = recognizer.recognize_google(
                         audio_data, language=api_lang, show_all=True
                     )
+                    return {"api_lang": api_lang, "our_lang": our_lang, "result": res, "error": None}
+                except Exception as ex:
+                    return {"api_lang": api_lang, "our_lang": our_lang, "result": None, "error": ex}
+
+            # Run all calls in parallel using thread pool executors to minimize latency (Auto mode drops from ~3s to ~1s)
+            tasks = [asyncio.to_thread(_recognize_single, api_lang, our_lang) for api_lang, our_lang in langs_to_try]
+            results = await asyncio.gather(*tasks)
+
+            for r in results:
+                api_lang = r["api_lang"]
+                our_lang = r["our_lang"]
+                result = r["result"]
+                error = r["error"]
+
+                if error:
+                    if isinstance(error, sr.UnknownValueError):
+                        logger.debug(f"ASR[google] {api_lang}: No speech recognized")
+                    elif isinstance(error, sr.RequestError):
+                        logger.warning(f"Google SR API error for {api_lang}: {error}")
+                    else:
+                        logger.warning(f"SR error for {api_lang}: {error}")
+                    continue
+
+                try:
                     text = ""
                     conf = 0.0
 
@@ -291,16 +316,8 @@ class ASREngine:
                             f"script={script}, valid={script_valid}, "
                             f"text='{text[:60]}...'"
                         )
-
-                except sr.UnknownValueError:
-                    logger.debug(f"ASR[google] {api_lang}: No speech recognized")
-                    continue
-                except sr.RequestError as e:
-                    logger.warning(f"Google SR API error for {api_lang}: {e}")
-                    continue
                 except Exception as e:
-                    logger.warning(f"SR error for {api_lang}: {e}")
-                    continue
+                    logger.warning(f"Error parsing candidate for {api_lang}: {e}")
 
             self._cleanup(wav_path)
             latency = round((time.time() - start) * 1000, 1)
