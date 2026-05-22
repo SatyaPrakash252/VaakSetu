@@ -8,6 +8,7 @@ import EventLog from '../components/EventLog'
 import TechStack from '../components/TechStack'
 import Waveform from '../components/Waveform'
 import EmotionChips from '../components/EmotionChips'
+import { API_BASE } from '../config'
 
 export default function Operations({ calls, activeCall, setActiveCall, connected, runScenario, takeover, onTakeover, onVerify }) {
   const data = activeCall || null
@@ -132,7 +133,7 @@ export default function Operations({ calls, activeCall, setActiveCall, connected
           <div className="interp-actions">
             <button className="btn btn-confirm" onClick={() => handleVerify('confirmed')}>✓ Confirmed</button>
             <button className="btn btn-partial" onClick={() => handleVerify('partial')}>~ Partially Correct</button>
-            <button className="btn btn-edit" onClick={() => { if (data?.nlp?.summary) { const newSummary = prompt('Edit AI Interpretation:', data.nlp.summary); if (newSummary && newSummary !== data.nlp.summary) { fetch((window.__API_BASE || '') + '/api/interpretation/edit', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({call_id: data.call_id, field: 'summary', old_value: data.nlp.summary, new_value: newSummary}) }).catch(e => console.error('Edit failed:', e)) } } }}>✎ Edit</button>
+            <button className="btn btn-edit" onClick={() => { if (data?.nlp?.summary) { const newSummary = prompt('Edit AI Interpretation:', data.nlp.summary); if (newSummary && newSummary !== data.nlp.summary) { fetch((API_BASE || '') + '/api/interpretation/edit', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({call_id: data.call_id, field: 'summary', old_value: data.nlp.summary, new_value: newSummary}) }).catch(e => console.error('Edit failed:', e)) } } }}>✎ Edit</button>
             <button
               className={`btn btn-takeover ${takeover ? 'active-state' : ''}`}
               onClick={() => data?.call_id && onTakeover(data.call_id)}
