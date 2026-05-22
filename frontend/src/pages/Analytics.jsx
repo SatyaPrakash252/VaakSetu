@@ -1,25 +1,61 @@
-import { useMemo } from 'react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area } from 'recharts'
+import { useMemo, useState, useEffect } from 'react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts'
+import { API_BASE } from '../config'
 
 const COLORS = ['#00e676', '#40c4ff', '#ffd600', '#ff6d00', '#ff1744', '#8b5cf6']
 
 export default function Analytics({ calls }) {
+  const [apiStats, setApiStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  // Fetch real analytics data from backend
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await fetch(API_BASE + '/api/analytics/summary')
+        if (res.ok) {
+          const data = await res.json()
+          setApiStats(data)
+        }
+      } catch (e) {
+        console.warn('[Analytics] API unavailable, using local calls data:', e.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchStats()
+  }, [])
+
   const stats = useMemo(() => {
+    if (apiStats) {
+      return {
+        total: apiStats.total_calls || calls.length,
+        active: calls.filter(c => c.status === 'active').length,
+        critical: apiStats.utcs_distribution?.CRITICAL || calls.filter(c => c.utcs?.level === 'CRITICAL').length,
+        avgUtcs: apiStats.avg_utcs || 0,
+        threats: apiStats.total_threats || 0,
+      }
+    }
     const total = calls.length
     const active = calls.filter(c => c.status === 'active').length
     const critical = calls.filter(c => c.utcs?.level === 'CRITICAL').length
-    const resolved = calls.filter(c => c.status === 'completed').length
-    return { total, active, critical, resolved }
-  }, [calls])
+    return { total, active, critical, avgUtcs: 0, threats: 0 }
+  }, [calls, apiStats])
 
   const langData = useMemo(() => {
+    if (apiStats?.language_distribution) {
+      return Object.entries(apiStats.language_distribution).map(([lang, count]) => ({
+        name: ({ kn: 'Kannada', hi: 'Hindi', en: 'English' })[lang] || lang,
+        value: count,
+      }))
+    }
     const map = {}
     calls.forEach(c => {
       const l = ({ kn: 'Kannada', hi: 'Hindi', en: 'English' })[c.language] || c.language || 'Unknown'
       map[l] = (map[l] || 0) + 1
     })
     return Object.entries(map).map(([name, value]) => ({ name, value }))
-  }, [calls])
+  }, [calls, apiStats])
 
   const utcsData = useMemo(() => {
     return calls.map((c, i) => ({
@@ -29,18 +65,37 @@ export default function Analytics({ calls }) {
   }, [calls])
 
   const levelData = useMemo(() => {
+    if (apiStats?.utcs_distribution) {
+      return Object.entries(apiStats.utcs_distribution)
+        .filter(([, v]) => v > 0)
+        .map(([name, value]) => ({ name, value }))
+    }
     const map = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, MINIMAL: 0 }
     calls.forEach(c => { map[c.utcs?.level || 'MINIMAL']++ })
     return Object.entries(map).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }))
-  }, [calls])
+  }, [calls, apiStats])
 
   const timelineData = useMemo(() => {
+    if (apiStats?.volume_by_hour && Object.keys(apiStats.volume_by_hour).length > 0) {
+      return Object.entries(apiStats.volume_by_hour).slice(-24).map(([hour, count]) => ({
+        hour: hour.slice(-5) || hour, // "2026-05-22T11" → "T11" or just show as is
+        calls: count,
+      }))
+    }
+    // Fallback: use local calls timestamps
+    const hourMap = {}
+    calls.forEach(c => {
+      const ts = c.started_at || c.timestamp || ''
+      if (ts) {
+        const h = ts.slice(11, 13) || '00'
+        hourMap[h] = (hourMap[h] || 0) + 1
+      }
+    })
     return Array.from({ length: 24 }, (_, h) => ({
       hour: `${String(h).padStart(2, '0')}:00`,
-      calls: Math.floor(Math.random() * 8) + 1,
-      critical: Math.floor(Math.random() * 3),
+      calls: hourMap[String(h).padStart(2, '0')] || 0,
     }))
-  }, [])
+  }, [calls, apiStats])
 
   const tooltipStyle = { contentStyle: { background: '#0d1117', border: '1px solid #1e2d3d', borderRadius: '4px', fontFamily: "'IBM Plex Mono', monospace", fontSize: '10px' } }
 
@@ -48,7 +103,7 @@ export default function Analytics({ calls }) {
     <div className="analytics-page">
       <h1>ANALYTICS</h1>
       <div className="subtitle" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--muted)', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '30px' }}>
-        System Performance & Call Distribution
+        {loading ? 'Loading analytics data...' : 'System Performance & Call Distribution'}
       </div>
 
       <div className="analytics-grid">
@@ -65,8 +120,8 @@ export default function Analytics({ calls }) {
           <div className="stat-lbl">Critical</div>
         </div>
         <div className="stat-card">
-          <div className="stat-num" style={{ color: 'var(--accent)' }}>{stats.resolved}</div>
-          <div className="stat-lbl">Resolved</div>
+          <div className="stat-num" style={{ color: 'var(--yellow)' }}>{stats.avgUtcs || '—'}</div>
+          <div className="stat-lbl">Avg UTCS</div>
         </div>
       </div>
 
@@ -102,7 +157,7 @@ export default function Analytics({ calls }) {
         </div>
 
         <div className="chart-card">
-          <h3>Call Volume Timeline (24h)</h3>
+          <h3>Call Volume Timeline</h3>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={timelineData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2d3d" />
@@ -110,7 +165,6 @@ export default function Analytics({ calls }) {
               <YAxis tick={{ fill: '#4a6278', fontSize: 9, fontFamily: "'IBM Plex Mono'" }} />
               <Tooltip {...tooltipStyle} />
               <Area type="monotone" dataKey="calls" stroke="#00e676" fill="rgba(0,230,118,0.1)" />
-              <Area type="monotone" dataKey="critical" stroke="#ff1744" fill="rgba(255,23,68,0.1)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>

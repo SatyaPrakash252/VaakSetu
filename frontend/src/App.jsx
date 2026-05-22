@@ -13,25 +13,32 @@ import { API_BASE } from './config'
 
 export default function App() {
   const navigate = useNavigate()
-  const { messages, connected, sendMessage } = useWebSocket()
+  const { messages, connected, reconnecting } = useWebSocket()
   const { calls, activeCall, setActiveCall, processResult, updateFromWS } = useCallState()
   const [takeover, setTakeover] = useState(false)
 
+  // Process WebSocket messages
   useEffect(() => {
     if (messages.length === 0) return
     const latest = messages[messages.length - 1]
     updateFromWS(latest)
-  }, [messages])
+  }, [messages, updateFromWS])
 
   const runScenario = useCallback(async (id) => {
     try {
       const res = await fetch(API_BASE + `/api/demo/scenario/${id}`, { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       processResult(data.result)
       navigate('/')
-    } catch {
-      processResult(MOCK[id]())
-      navigate('/')
+    } catch (e) {
+      console.warn('[Demo] Backend unavailable, using mock data:', e.message)
+      if (MOCK[id]) {
+        processResult(MOCK[id]())
+        navigate('/')
+      } else {
+        console.error('[Demo] No mock data available for scenario', id)
+      }
     }
   }, [processResult, navigate])
 
@@ -39,7 +46,9 @@ export default function App() {
     setTakeover(prev => !prev)
     try {
       await fetch(API_BASE + `/api/calls/${callId}/takeover`, { method: 'POST' })
-    } catch {}
+    } catch (e) {
+      console.error('[Takeover] Failed:', e.message)
+    }
   }, [])
 
   const handleVerify = useCallback(async (callId, confirmed, corrections) => {
@@ -49,14 +58,16 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ call_id: callId, confirmed, partial_corrections: corrections })
       })
-    } catch {}
+    } catch (e) {
+      console.error('[Verify] Failed:', e.message)
+    }
   }, [])
 
   return (
     <>
       <div className={`critical-overlay ${takeover ? 'show' : ''}`}></div>
       <div className={`takeover-banner ${takeover ? 'show' : ''}`}>⚠ HUMAN TAKEOVER ACTIVE — AGENT IN CONTROL ⚠</div>
-      <Header connected={connected} />
+      <Header connected={connected} reconnecting={reconnecting} />
       <Routes>
         <Route path="/" element={
           <Operations
@@ -80,7 +91,7 @@ export default function App() {
   )
 }
 
-/* ── Mock Data for offline ── */
+/* ── Mock Data for offline fallback ── */
 const MOCK = {
   1: () => ({
     call_id:'CALL-DEMO01',timestamp:new Date().toISOString(),

@@ -1,7 +1,8 @@
 {
-  "name": "frontend",
+  "name": "vaaksetu-frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
+  "description": "VaakSetu — Real-Time Dialect-Aware Voice AI Dashboard for Karnataka's 1092 Helpline",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,18 +10,16 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "typescript": "~6.0.2",
+    "@vitejs/plugin-react": "^6.0.1",
     "vite": "^8.0.10"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^6.0.1",
     "leaflet": "^1.9.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-is": "^19.2.5",
     "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.14.2",
-    "recharts": "^3.8.1",
-    "socket.io-client": "^4.8.3"
+    "recharts": "^3.8.1"
   }
 }

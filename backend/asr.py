@@ -8,6 +8,11 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger("vaaksetu.asr")
 
+# Security limits
+MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_AUDIO_DURATION_SECONDS = 60           # 60 seconds
+SR_TIMEOUT_SECONDS = 10                   # Google SR API timeout
+
 
 class ASREngine:
     def __init__(self):
@@ -69,6 +74,12 @@ class ASREngine:
             return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
                     "error": "No audio data provided"}
 
+        # Security: check base64 size before decoding
+        estimated_size = len(audio_base64) * 3 // 4
+        if estimated_size > MAX_AUDIO_SIZE_BYTES:
+            return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
+                    "error": f"Audio too large ({estimated_size // (1024*1024)}MB). Maximum is {MAX_AUDIO_SIZE_BYTES // (1024*1024)}MB."}
+
         if self.backend == "whisper":
             return await self._transcribe_whisper(audio_base64, start, language_hint)
         elif self.backend == "speech_recognition":
@@ -87,11 +98,26 @@ class ASREngine:
                     "error": "Whisper model failed to load"}
         try:
             audio_bytes = base64.b64decode(audio_base64)
+
+            # Security: check decoded file size
+            if len(audio_bytes) > MAX_AUDIO_SIZE_BYTES:
+                return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
+                        "error": f"Audio file too large ({len(audio_bytes) // (1024*1024)}MB). Maximum is {MAX_AUDIO_SIZE_BYTES // (1024*1024)}MB."}
+
             # Always convert to WAV first for reliability
             wav_path = self._convert_to_wav(audio_bytes)
             if not wav_path:
                 return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
                         "error": "Audio conversion failed"}
+
+            # Security: check audio duration
+            duration = self._get_audio_duration(wav_path)
+            if duration and duration > MAX_AUDIO_DURATION_SECONDS:
+                logger.warning(f"Audio too long ({duration:.1f}s), truncating to {MAX_AUDIO_DURATION_SECONDS}s")
+                wav_path = self._truncate_audio(wav_path, MAX_AUDIO_DURATION_SECONDS)
+                if not wav_path:
+                    return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
+                            "error": f"Audio duration ({duration:.0f}s) exceeds limit ({MAX_AUDIO_DURATION_SECONDS}s) and truncation failed."}
 
             result = self.model.transcribe(wav_path, task="transcribe", language=None, fp16=False)
             self._cleanup(wav_path)
@@ -185,11 +211,25 @@ class ASREngine:
 
             audio_bytes = base64.b64decode(audio_base64)
 
+            # Security: check decoded file size
+            if len(audio_bytes) > MAX_AUDIO_SIZE_BYTES:
+                return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
+                        "error": f"Audio file too large ({len(audio_bytes) // (1024*1024)}MB). Maximum is {MAX_AUDIO_SIZE_BYTES // (1024*1024)}MB."}
+
             # Convert to WAV (critical — SR only reads WAV/FLAC/AIFF)
             wav_path = self._convert_to_wav(audio_bytes)
             if not wav_path:
                 return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
                         "error": "Audio conversion to WAV failed. Make sure ffmpeg is installed."}
+
+            # Security: check audio duration
+            duration = self._get_audio_duration(wav_path)
+            if duration and duration > MAX_AUDIO_DURATION_SECONDS:
+                logger.warning(f"Audio too long ({duration:.1f}s), truncating to {MAX_AUDIO_DURATION_SECONDS}s")
+                wav_path = self._truncate_audio(wav_path, MAX_AUDIO_DURATION_SECONDS)
+                if not wav_path:
+                    return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
+                            "error": f"Audio duration ({duration:.0f}s) exceeds limit ({MAX_AUDIO_DURATION_SECONDS}s) and truncation failed."}
 
             recognizer = sr.Recognizer()
             recognizer.energy_threshold = 200
@@ -220,7 +260,9 @@ class ASREngine:
 
             for api_lang, our_lang in langs_to_try:
                 try:
-                    result = recognizer.recognize_google(audio_data, language=api_lang, show_all=True)
+                    result = recognizer.recognize_google(
+                        audio_data, language=api_lang, show_all=True
+                    )
                     text = ""
                     conf = 0.0
 
@@ -280,10 +322,6 @@ class ASREngine:
                 best = max(valid_candidates, key=lambda c: c["confidence"])
             else:
                 # No script-valid result — fallback logic
-                # This can happen if the audio is code-mixed or very unclear
-                # Prefer English/Latin results since transliteration artifacts
-                # usually appear as Latin text in kn-IN (which we'd catch above)
-                # or Kannada/Devanagari in en-IN (also caught)
                 latin_candidates = [c for c in candidates if c["script"] == "latin"]
                 if latin_candidates:
                     best = max(latin_candidates, key=lambda c: c["confidence"])
@@ -324,20 +362,25 @@ class ASREngine:
         # If already WAV, save directly
         if fmt == "wav":
             try:
-                path = tempfile.mktemp(suffix=".wav")
-                with open(path, "wb") as f:
-                    f.write(audio_bytes)
+                tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                tmp.write(audio_bytes)
+                tmp.close()
                 # Still re-encode to ensure proper PCM WAV format
-                return self._ffmpeg_convert(path, fmt="wav")
+                return self._ffmpeg_convert(tmp.name, fmt="wav")
             except Exception as e:
                 logger.error(f"WAV save error: {e}")
                 return None
 
         # Save raw audio to temp file with correct extension
         ext = f".{fmt}" if fmt else ".bin"
-        raw_path = tempfile.mktemp(suffix=ext)
-        with open(raw_path, "wb") as f:
-            f.write(audio_bytes)
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+            tmp.write(audio_bytes)
+            tmp.close()
+            raw_path = tmp.name
+        except Exception as e:
+            logger.error(f"Temp file creation error: {e}")
+            return None
 
         # Method 1: ffmpeg (most reliable)
         if self._ffmpeg_available:
@@ -353,11 +396,12 @@ class ASREngine:
             else:
                 audio = AudioSegment.from_file(raw_path)
             audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
-            wav_path = tempfile.mktemp(suffix=".wav")
-            audio.export(wav_path, format="wav")
+            tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp_wav.close()
+            audio.export(tmp_wav.name, format="wav")
             self._cleanup(raw_path)
-            logger.info(f"Audio converted via pydub: {wav_path}")
-            return wav_path
+            logger.info(f"Audio converted via pydub: {tmp_wav.name}")
+            return tmp_wav.name
         except Exception as e:
             logger.warning(f"pydub conversion failed: {e}")
 
@@ -366,7 +410,13 @@ class ASREngine:
 
     def _ffmpeg_convert(self, input_path: str, fmt: str = None) -> Optional[str]:
         """Use ffmpeg directly to convert audio to 16kHz mono PCM WAV"""
-        wav_path = tempfile.mktemp(suffix=".wav")
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            wav_path = tmp.name
+        except Exception as e:
+            logger.error(f"Temp file creation error: {e}")
+            return None
         try:
             cmd = [
                 "ffmpeg", "-y",  # Overwrite output
@@ -389,6 +439,57 @@ class ASREngine:
         except Exception as e:
             logger.warning(f"ffmpeg error: {e}")
             self._cleanup(wav_path)
+            return None
+
+    def _get_audio_duration(self, wav_path: str) -> Optional[float]:
+        """Get audio duration in seconds using ffprobe or wave module"""
+        # Try wave module first (fastest for WAV files)
+        try:
+            import wave
+            with wave.open(wav_path, 'rb') as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                if rate > 0:
+                    return frames / float(rate)
+        except Exception:
+            pass
+
+        # Fallback to ffprobe
+        if self._ffmpeg_available:
+            try:
+                cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                       "-of", "default=noprint_wrappers=1:nokey=1", wav_path]
+                result = subprocess.run(cmd, capture_output=True, timeout=10, text=True)
+                if result.returncode == 0 and result.stdout.strip():
+                    return float(result.stdout.strip())
+            except Exception:
+                pass
+
+        return None
+
+    def _truncate_audio(self, wav_path: str, max_seconds: float) -> Optional[str]:
+        """Truncate audio to max_seconds using ffmpeg"""
+        if not self._ffmpeg_available:
+            return None
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            out_path = tmp.name
+            cmd = [
+                "ffmpeg", "-y", "-i", wav_path,
+                "-t", str(max_seconds),
+                "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                out_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=30)
+            if result.returncode == 0 and os.path.exists(out_path):
+                self._cleanup(wav_path)
+                return out_path
+            else:
+                self._cleanup(out_path)
+                return None
+        except Exception as e:
+            logger.warning(f"Audio truncation failed: {e}")
             return None
 
     def _detect_format(self, audio_bytes: bytes) -> str:

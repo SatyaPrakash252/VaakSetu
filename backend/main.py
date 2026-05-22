@@ -2,13 +2,13 @@
 VaakSetu — Core Backend (FastAPI)
 Real-time AI middleware for 1092 Helpline
 """
-import os, json, asyncio, logging
+import os, json, asyncio, logging, uuid as _uuid
 from datetime import datetime
 from typing import Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -47,11 +47,42 @@ learning_pipeline = LearningPipeline()
 async def lifespan(app: FastAPI):
     logger.info("VaakSetu starting...")
     db_engine.init_db()
+    # Start WebSocket heartbeat task
+    heartbeat_task = asyncio.create_task(ws_manager.heartbeat_loop())
     yield
+    heartbeat_task.cancel()
     logger.info("VaakSetu shutting down...")
 
-app = FastAPI(title="VaakSetu", version="1.0.0", lifespan=lifespan, debug=True)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(
+    title="VaakSetu",
+    version="2.0.0",
+    lifespan=lifespan,
+    debug=os.getenv("DEBUG", "false").lower() == "true",
+)
+
+# Restrict CORS to known origins only
+allowed_origins = [
+    "https://vaak-setu-self.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Request ID middleware for traceability ──────────────────────────────────
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", _uuid.uuid4().hex[:12])
+    logger.info(f"[req:{request_id}] {request.method} {request.url.path}")
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 # Serve TTS audio files
 from fastapi.staticfiles import StaticFiles
@@ -91,7 +122,7 @@ class AIInterpretationEdit(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"service":"VaakSetu","version":"1.0.0","status":"operational"}
+    return {"service":"VaakSetu","version":"2.0.1","status":"operational"}
 
 @app.get("/api/test_reload")
 async def test_reload():
@@ -100,7 +131,8 @@ async def test_reload():
 @app.get("/health")
 async def health_check():
     return {"status":"healthy","timestamp":datetime.utcnow().isoformat(),
-        "engines":{k:v.is_ready() for k,v in {"asr":asr_engine,"nlp":nlp_engine,"keywords":keyword_engine,"utcs":utcs_engine,"emotion":emotion_engine,"noise":noise_engine,"tts":tts_engine,"database":db_engine}.items()}}
+        "engines":{k:v.is_ready() for k,v in {"asr":asr_engine,"nlp":nlp_engine,"keywords":keyword_engine,"utcs":utcs_engine,"emotion":emotion_engine,"noise":noise_engine,"tts":tts_engine,"database":db_engine}.items()},
+        "websocket_connections": ws_manager.connection_count}
 
 @app.post("/api/calls/start")
 async def start_call(request: CallStartRequest):
@@ -109,8 +141,8 @@ async def start_call(request: CallStartRequest):
         await ws_manager.broadcast({"type":"new_call","call":call,"timestamp":datetime.utcnow().isoformat()})
         return call
     except Exception as e:
-        import traceback
-        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+        logger.error(f"start_call error: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/api/calls")
 async def list_calls(status: Optional[str] = None, limit: int = 50):
@@ -131,7 +163,7 @@ async def end_call(call_id: str):
 
 @app.post("/api/process")
 async def process_audio(request: TranscriptionRequest):
-    """Main processing pipeline: ASR→Keywords→NLP→Emotion→UTCS→Broadcast"""
+    """Main processing pipeline: ASR→Keywords→NLP→Verification→Emotion→UTCS→Broadcast"""
     call_id = request.call_id
     is_text_input = bool(request.text and request.text.strip())
     asr_error = None
@@ -187,6 +219,9 @@ async def process_audio(request: TranscriptionRequest):
     nlp_result = await nlp_engine.process(transcript_text, detected_language,
                                            dialect_zone=keyword_result.get("dialect_zone", "general"))
     logger.info(f"[{call_id}] NLP: intent={nlp_result.get('intent', {}).get('category')}, urgency={nlp_result.get('urgency')}, dialect={keyword_result.get('dialect_zone')}")
+
+    # Step 3.5: Wire verification — store NLP summary for later confirmation
+    verification_engine.set_summary(call_id, nlp_result.get('summary', ''), detected_language)
 
     # Step 4: Emotion analysis
     if request.audio_base64 and not is_text_input:
@@ -360,6 +395,44 @@ async def dashboard_stats():
 async def dashboard_events(limit: int = 100):
     return db_engine.get_events(limit=limit)
 
+# ── Analytics Endpoint ───────────────────────────────────────────────────────
+@app.get("/api/analytics/summary")
+async def analytics_summary():
+    """Aggregate analytics from call database"""
+    calls = db_engine.get_calls(limit=500)
+    utcs_dist = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "MINIMAL": 0}
+    lang_dist = {}
+    threat_dist = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "NONE": 0}
+    volume_by_hour = {}
+    total_calls = len(calls)
+    total_threats = 0
+    total_utcs = 0
+    for c in calls:
+        level = c.get("utcs_level", "MINIMAL")
+        if level in utcs_dist:
+            utcs_dist[level] += 1
+        lang = c.get("language", "unknown") or "unknown"
+        lang_dist[lang] = lang_dist.get(lang, 0) + 1
+        sev = c.get("keyword_severity", "NONE") or "NONE"
+        if sev in threat_dist:
+            threat_dist[sev] += 1
+        if sev in ("CRITICAL", "HIGH"):
+            total_threats += 1
+        total_utcs += c.get("utcs_score", 0) or 0
+        ts = c.get("created_at", "") or ""
+        if ts:
+            hour = ts[:13]
+            volume_by_hour[hour] = volume_by_hour.get(hour, 0) + 1
+    return {
+        "total_calls": total_calls,
+        "total_threats": total_threats,
+        "avg_utcs": round(total_utcs / max(1, total_calls), 1),
+        "utcs_distribution": utcs_dist,
+        "language_distribution": lang_dist,
+        "threat_distribution": threat_dist,
+        "volume_by_hour": dict(sorted(volume_by_hour.items())),
+    }
+
 # ── Database Viewer API ──────────────────────────────────────────────────────
 @app.get("/api/db/tables")
 async def db_tables():
@@ -401,9 +474,12 @@ async def run_demo_scenario(scenario_id: int):
         await ws_manager.broadcast({"type":"noise_analysis","call_id":call["call_id"],"data":nr,"timestamp":datetime.utcnow().isoformat()})
     return {"scenario":s["name"],"result":result}
 
+from fastapi.responses import Response as XMLResponse
 @app.post("/api/twilio/voice")
 async def twilio_voice_webhook():
-    return twilio_handler.handle_incoming()
+    result = twilio_handler.handle_incoming()
+    twiml = result.get('twiml', '') if isinstance(result, dict) else str(result)
+    return XMLResponse(content=twiml, media_type='application/xml')
 
 if __name__ == "__main__":
     import uvicorn

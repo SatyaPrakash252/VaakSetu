@@ -1,21 +1,25 @@
-export default function Waveform({ active }) {
-  const bars = Array.from({ length: 40 }, (_, i) => ({
-    height: Math.random() * 24 + 6,
-    delay: Math.random() * 0.8,
-    dur: 0.5 + Math.random() * 0.6,
-  }))
+import { useEffect, useRef } from 'react'
 
-  return (
-    <div className="waveform">
-      {bars.map((b, i) => (
-        <div key={i} className="wave-bar" style={{
-          height: `${b.height}px`,
-          animationDelay: `${b.delay}s`,
-          animationDuration: `${b.dur}s`,
-          opacity: active ? 0.7 : 0.15,
-          animationPlayState: active ? 'running' : 'paused',
-        }} />
-      ))}
-    </div>
-  )
+/**
+ * Waveform — Compact audio waveform for the Operations dashboard sidebar
+ * Shows a gentle animated sine wave (no random bars)
+ */
+export default function Waveform({ bars = 32 }) {
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    // Create bar elements once
+    container.innerHTML = ''
+    for (let i = 0; i < bars; i++) {
+      const bar = document.createElement('div')
+      bar.className = 'wave-bar'
+      bar.style.animationDelay = `${(i / bars) * 0.8}s`
+      bar.style.height = '100%'
+      container.appendChild(bar)
+    }
+  }, [bars])
+
+  return <div ref={containerRef} className="waveform" />
 }

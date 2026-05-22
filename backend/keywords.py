@@ -199,6 +199,16 @@ class KeywordEngine:
             return max(zone_scores, key=zone_scores.get)
         return "general"
 
+    def _is_word_boundary_match(self, text: str, keyword: str, pos: int) -> bool:
+        """Check if a keyword match occurs at word boundaries (prevents 'die' matching 'diehard')."""
+        if len(keyword) >= 5:
+            return True  # Long keywords are reliable as substrings
+        # For short keywords, require word boundaries
+        before_ok = (pos == 0) or (not text[pos - 1].isalnum())
+        end = pos + len(keyword)
+        after_ok = (end >= len(text)) or (not text[end].isalnum())
+        return before_ok and after_ok
+
     def _normalize_text(self, text: str) -> str:
         """Normalize text for better matching: handle common spelling variations"""
         text = text.lower().strip()
@@ -245,10 +255,13 @@ class KeywordEngine:
             except Exception as e:
                 logger.warning(f"Aho-Corasick scan error: {e} — falling back")
 
-        # Pass 1: Exact substring matching (fallback / additional)
+        # Pass 1: Exact substring matching with word boundary check for short keywords
         for keyword, info in self.lookup.items():
             if keyword in text_lower and keyword not in matched_keywords:
                 pos = text_lower.find(keyword)
+                # Word boundary check for short keywords to prevent false positives
+                if not self._is_word_boundary_match(text_lower, keyword, pos):
+                    continue
                 hits.append({
                     "keyword": keyword,
                     "tier": info["tier"],
@@ -317,7 +330,7 @@ class KeywordEngine:
             "bachho": "bachao", "bachoo": "bachao", "bacho": "bachao",
             "bacchao": "bachao", "bchao": "bachao", "bachav": "bachao",
             "bacchaop": "bachao", "bacchap": "bachao", "bachaoo": "bachao",
-            "maaro": "maar", "maro": "maro", "maarr": "maar",
+            "maaro": "maar", "maarr": "maar",
             "marr": "maar", "maar rha": "maar raha",
             "kil": "kill", "kll": "kill", "killl": "kill",
             "kilme": "kill me", "killme": "kill me",

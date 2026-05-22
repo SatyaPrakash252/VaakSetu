@@ -43,7 +43,7 @@ export default function Operations({ calls, activeCall, setActiveCall, connected
   }
 
   // Compute signal percentages from UTCS breakdown
-  const kwPct = Math.min(100, Math.round((kwScore / 10) * 100) / 100)
+  const kwPct = Math.min(100, Math.round(kwScore / 7))
   const emPct = data?.emotion ? Math.round(Math.max(data.emotion.panic, data.emotion.fear, data.emotion.distress) * 100) : 0
   const noisePct = data?.noise_analysis ? Math.round((data.noise_analysis.confidence || 0) * 100) : Math.min(100, noiseScore)
   const threatPct = Math.min(100, Math.round(score / 10))
@@ -132,7 +132,7 @@ export default function Operations({ calls, activeCall, setActiveCall, connected
           <div className="interp-actions">
             <button className="btn btn-confirm" onClick={() => handleVerify('confirmed')}>✓ Confirmed</button>
             <button className="btn btn-partial" onClick={() => handleVerify('partial')}>~ Partially Correct</button>
-            <button className="btn btn-edit">✎ Edit</button>
+            <button className="btn btn-edit" onClick={() => { if (data?.nlp?.summary) { const newSummary = prompt('Edit AI Interpretation:', data.nlp.summary); if (newSummary && newSummary !== data.nlp.summary) { fetch((window.__API_BASE || '') + '/api/interpretation/edit', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({call_id: data.call_id, field: 'summary', old_value: data.nlp.summary, new_value: newSummary}) }).catch(e => console.error('Edit failed:', e)) } } }}>✎ Edit</button>
             <button
               className={`btn btn-takeover ${takeover ? 'active-state' : ''}`}
               onClick={() => data?.call_id && onTakeover(data.call_id)}

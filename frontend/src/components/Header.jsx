@@ -1,12 +1,15 @@
 import { NavLink } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 
-export default function Header({ connected }) {
+export default function Header({ connected, reconnecting }) {
   const [time, setTime] = useState(new Date())
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  const statusText = connected ? 'LIVE' : reconnecting ? 'RECONNECTING' : 'OFFLINE'
+  const wsText = connected ? 'WS:CONNECTED' : reconnecting ? 'WS:RECONNECTING...' : 'WS:DISCONNECTED'
 
   return (
     <header className="header">
@@ -15,6 +18,7 @@ export default function Header({ connected }) {
           <div className="logo-text">VAAKSETU</div>
           <div className="logo-sub">1092 Helpline · AI Assist Layer</div>
         </div>
+        <span className="version-badge">v2.0</span>
       </div>
       <div className="header-nav">
         <NavLink to="/" className={({ isActive }) => `nav-btn ${isActive ? 'active' : ''}`} end>◉ OPERATIONS</NavLink>
@@ -27,10 +31,10 @@ export default function Header({ connected }) {
       <div className="header-right">
         <div className="live-badge">
           <div className={`live-dot ${connected ? '' : 'off'}`}></div>
-          {connected ? 'LIVE' : 'OFFLINE'}
+          {statusText}
         </div>
         <div className="clock">{time.toLocaleTimeString('en-IN')}</div>
-        <div className="ws-status">WS:{connected ? 'CONNECTED' : 'DISCONNECTED'}</div>
+        <div className="ws-status">{wsText}</div>
       </div>
     </header>
   )
