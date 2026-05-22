@@ -1,4 +1,4 @@
-# VaakSetu Backend — Python 3.11 + Whisper
+# VaakSetu Backend — Python 3.11 (Lightweight)
 FROM python:3.11-slim
 
 # System dependencies for audio processing
@@ -11,11 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python deps
+# Install Python deps (no torch/whisper — uses SpeechRecognition instead)
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip "setuptools<70" wheel
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir --no-build-isolation openai-whisper==20231117
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
