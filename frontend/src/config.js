@@ -1,8 +1,7 @@
 // Central API configuration — single source of truth for backend URL
 const isDev = window.location.hostname === 'localhost';
 
-export const API_BASE = import.meta.env.VITE_API_URL
-  || (isDev ? '' : 'https://vaaksetu-x1uf.onrender.com');
+export const API_BASE = '';
 
 export const WS_URL = import.meta.env.VITE_WS_URL
   || (isDev

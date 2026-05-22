@@ -5,6 +5,14 @@
       "destination": "https://vaaksetu-x1uf.onrender.com/api/$1"
     },
     {
+      "source": "/health",
+      "destination": "https://vaaksetu-x1uf.onrender.com/health"
+    },
+    {
+      "source": "/audio/(.*)",
+      "destination": "https://vaaksetu-x1uf.onrender.com/audio/$1"
+    },
+    {
       "source": "/ws/(.*)",
       "destination": "wss://vaaksetu-x1uf.onrender.com/ws/$1"
     },
