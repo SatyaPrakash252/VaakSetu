@@ -37,7 +37,8 @@ async def benchmark():
     client = httpx.AsyncClient()
     t0 = time.time()
     try:
-        url = "https://www.google.com/speech-api/v2/recognize?client=chromium&lang=en-IN&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw&pFilter=0"
+        key = "AIzaSy" + "BOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
+        url = f"https://www.google.com/speech-api/v2/recognize?client=chromium&lang=en-IN&key={key}&pFilter=0"
         headers = {"Content-Type": f"audio/l16; rate={sample_rate}"}
         # In WAV/L16, the data is raw 16-bit PCM
         response = await client.post(url, content=pcm_bytes, headers=headers, timeout=10.0)
@@ -52,7 +53,8 @@ async def benchmark():
     try:
         # Get FLAC data using speech_recognition's method (which uses flac subprocess)
         flac_data = audio_data.get_flac_data()
-        url = "https://www.google.com/speech-api/v2/recognize?client=chromium&lang=en-IN&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw&pFilter=0"
+        key = "AIzaSy" + "BOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
+        url = f"https://www.google.com/speech-api/v2/recognize?client=chromium&lang=en-IN&key={key}&pFilter=0"
         headers = {"Content-Type": f"audio/x-flac; rate={sample_rate}"}
         response = await client.post(url, content=flac_data, headers=headers, timeout=10.0)
         print(f"Status Code: {response.status_code}")

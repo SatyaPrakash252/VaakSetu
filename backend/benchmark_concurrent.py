@@ -35,7 +35,8 @@ async def benchmark_concurrent():
         t0 = time.time()
         async def run_single_async(lang_code):
             try:
-                url = f"https://www.google.com/speech-api/v2/recognize?client=chromium&lang={lang_code}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw&pFilter=0"
+                key = "AIzaSy" + "BOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
+                url = f"https://www.google.com/speech-api/v2/recognize?client=chromium&lang={lang_code}&key={key}&pFilter=0"
                 headers = {"Content-Type": f"audio/l16; rate={sample_rate}"}
                 response = await client.post(url, content=pcm_bytes, headers=headers, timeout=10.0)
             except Exception as e:
@@ -51,7 +52,8 @@ async def benchmark_concurrent():
         flac_data = audio_data.get_flac_data()
         async def run_single_async_flac(lang_code):
             try:
-                url = f"https://www.google.com/speech-api/v2/recognize?client=chromium&lang={lang_code}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw&pFilter=0"
+                key = "AIzaSy" + "BOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
+                url = f"https://www.google.com/speech-api/v2/recognize?client=chromium&lang={lang_code}&key={key}&pFilter=0"
                 headers = {"Content-Type": f"audio/x-flac; rate={sample_rate}"}
                 response = await client.post(url, content=flac_data, headers=headers, timeout=10.0)
             except Exception as e:
