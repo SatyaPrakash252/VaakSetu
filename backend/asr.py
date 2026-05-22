@@ -195,19 +195,23 @@ class ASREngine:
         return expected.get(lang) == script
 
     async def _transcribe_sr(self, audio_base64: str, start: float, language_hint: str = "auto") -> Dict[str, Any]:
-        """Transcribe using SpeechRecognition (Google Web Speech API — free).
+        """Transcribe using direct async HTTPX calls to Google Speech API over a connection pool.
         
         Strategy for accurate language detection:
         1. If user picked a specific language, ONLY try that language — trust the user.
-        2. In 'auto' mode, try all 3 languages independently.
+        2. In 'auto' mode, try all 3 languages independently in parallel.
         3. For each result, detect the Unicode script of the returned text.
-        4. A result is VALID only if the script matches the requested language 
-           (e.g. en-IN must return Latin text, kn-IN must return Kannada script).
-        5. If kn-IN returns Latin text, it's a transliteration artifact — discard it.
-        6. Among valid results, pick the one with highest confidence.
+        4. A result is VALID only if the script matches the requested language.
+        5. Among valid results, pick the one with highest confidence.
         """
         try:
             import speech_recognition as sr
+            import httpx
+            import json
+
+            # Lazy-initialize the persistent client if not present
+            if not hasattr(self, "http_client") or self.http_client is None:
+                self.http_client = httpx.AsyncClient(timeout=SR_TIMEOUT_SECONDS)
 
             audio_bytes = base64.b64decode(audio_base64)
 
@@ -216,7 +220,7 @@ class ASREngine:
                 return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
                         "error": f"Audio file too large ({len(audio_bytes) // (1024*1024)}MB). Maximum is {MAX_AUDIO_SIZE_BYTES // (1024*1024)}MB."}
 
-            # Convert to WAV (critical — SR only reads WAV/FLAC/AIFF)
+            # Convert to WAV (critical — to load with AudioFile)
             wav_path = self._convert_to_wav(audio_bytes)
             if not wav_path:
                 return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
@@ -244,6 +248,13 @@ class ASREngine:
                 return {"text": "", "language": "unknown", "latency_ms": 0, "confidence": 0.0,
                         "error": f"Could not read audio file: {e}"}
 
+            # Extract raw PCM (L16) data to avoid spawning external flac subprocesses
+            rate = audio_data.sample_rate if audio_data.sample_rate >= 8000 else 8000
+            pcm_data = audio_data.get_raw_data(
+                convert_rate=None if audio_data.sample_rate >= 8000 else 8000,
+                convert_width=2
+            )
+
             # ── Determine which languages to try ─────────────────────────
             if language_hint and language_hint != "auto":
                 # User explicitly chose a language — ONLY try that one
@@ -254,70 +265,67 @@ class ASREngine:
                 # Auto mode: try all three
                 langs_to_try = [("en-IN", "en"), ("hi-IN", "hi"), ("kn-IN", "kn")]
 
-            # ── Collect results from each language ───────────────────────
-            candidates = []  # List of (text, lang, confidence, script, script_valid)
+            candidates = []
             all_transcripts = {}
 
-            # Define a helper function to perform the blocking network call
-            def _recognize_single(api_lang: str, our_lang: str):
+            # Helper for async request over persistent pool using raw PCM (L16)
+            async def _recognize_single_async(api_lang: str, our_lang: str):
                 try:
-                    res = recognizer.recognize_google(
-                        audio_data, language=api_lang, show_all=True
-                    )
-                    return {"api_lang": api_lang, "our_lang": our_lang, "result": res, "error": None}
+                    url = f"https://www.google.com/speech-api/v2/recognize?client=chromium&lang={api_lang}&key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw&pFilter=0"
+                    headers = {"Content-Type": f"audio/l16; rate={rate}"}
+                    response = await self.http_client.post(url, content=pcm_data, headers=headers)
+                    if response.status_code != 200:
+                        logger.warning(f"Google SR HTTP {response.status_code} for {api_lang}")
+                        return None
+                    
+                    # Parse the line-delimited JSON response
+                    text = ""
+                    conf = 0.0
+                    for line in response.text.split("\n"):
+                        if not line.strip():
+                            continue
+                        data = json.loads(line)
+                        result = data.get("result", [])
+                        if len(result) != 0:
+                            alternatives = result[0].get("alternative", [])
+                            if len(alternatives) > 0:
+                                text = alternatives[0].get("transcript", "").strip()
+                                conf = alternatives[0].get("confidence", 0.5)
+                                break
+                    
+                    if text:
+                        return {"text": text, "confidence": conf, "our_lang": our_lang, "api_lang": api_lang}
                 except Exception as ex:
-                    return {"api_lang": api_lang, "our_lang": our_lang, "result": None, "error": ex}
+                    logger.warning(f"Async Google SR error for {api_lang}: {ex}")
+                return None
 
-            # Run all calls in parallel using thread pool executors to minimize latency (Auto mode drops from ~3s to ~1s)
-            tasks = [asyncio.to_thread(_recognize_single, api_lang, our_lang) for api_lang, our_lang in langs_to_try]
+            # Execute parallel HTTP requests over the connection pool
+            tasks = [_recognize_single_async(api_lang, our_lang) for api_lang, our_lang in langs_to_try]
             results = await asyncio.gather(*tasks)
 
             for r in results:
-                api_lang = r["api_lang"]
-                our_lang = r["our_lang"]
-                result = r["result"]
-                error = r["error"]
-
-                if error:
-                    if isinstance(error, sr.UnknownValueError):
-                        logger.debug(f"ASR[google] {api_lang}: No speech recognized")
-                    elif isinstance(error, sr.RequestError):
-                        logger.warning(f"Google SR API error for {api_lang}: {error}")
-                    else:
-                        logger.warning(f"SR error for {api_lang}: {error}")
+                if not r:
                     continue
-
-                try:
-                    text = ""
-                    conf = 0.0
-
-                    if result and isinstance(result, dict):
-                        alternatives = result.get("alternative", [])
-                        if alternatives:
-                            text = alternatives[0].get("transcript", "").strip()
-                            conf = alternatives[0].get("confidence", 0.5)
-                    elif isinstance(result, str) and result.strip():
-                        text = result.strip()
-                        conf = 0.5
-
-                    if text:
-                        script = self._detect_script(text)
-                        script_valid = self._script_matches_lang(script, our_lang)
-                        candidates.append({
-                            "text": text,
-                            "lang": our_lang,
-                            "confidence": conf,
-                            "script": script,
-                            "script_valid": script_valid,
-                        })
-                        all_transcripts[our_lang] = text
-                        logger.info(
-                            f"ASR[google] {api_lang}: conf={conf:.3f}, "
-                            f"script={script}, valid={script_valid}, "
-                            f"text='{text[:60]}...'"
-                        )
-                except Exception as e:
-                    logger.warning(f"Error parsing candidate for {api_lang}: {e}")
+                text = r["text"]
+                conf = r["confidence"]
+                our_lang = r["our_lang"]
+                api_lang = r["api_lang"]
+                
+                script = self._detect_script(text)
+                script_valid = self._script_matches_lang(script, our_lang)
+                candidates.append({
+                    "text": text,
+                    "lang": our_lang,
+                    "confidence": conf,
+                    "script": script,
+                    "script_valid": script_valid,
+                })
+                all_transcripts[our_lang] = text
+                logger.info(
+                    f"ASR[google-async] {api_lang}: conf={conf:.3f}, "
+                    f"script={script}, valid={script_valid}, "
+                    f"text='{text[:60]}...'"
+                )
 
             self._cleanup(wav_path)
             latency = round((time.time() - start) * 1000, 1)

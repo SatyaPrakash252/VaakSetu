@@ -170,6 +170,16 @@ async def process_audio(request: TranscriptionRequest):
     asr_error = None
     asr_backend = None
 
+    # Load call session to check cached language
+    cached_language = None
+    try:
+        call_session = db_engine.get_call(call_id)
+        if call_session and call_session.get("language") and call_session.get("language") != "auto":
+            cached_language = call_session["language"]
+            logger.info(f"[{call_id}] Using cached session language: '{cached_language}'")
+    except Exception as e:
+        logger.warning(f"Failed to fetch call session for language caching: {e}")
+
     # Step 1: Get transcript text
     if is_text_input:
         transcript_text = request.text.strip()
@@ -178,7 +188,8 @@ async def process_audio(request: TranscriptionRequest):
         asr_backend = "text_input"
         logger.info(f"[{call_id}] TEXT INPUT: '{transcript_text[:80]}...'")
     else:
-        r = await asr_engine.transcribe(request.audio_base64, request.language or "auto")
+        req_lang = cached_language or request.language or "auto"
+        r = await asr_engine.transcribe(request.audio_base64, req_lang)
         transcript_text = r.get("text", "").strip()
         detected_language = r.get("language", "unknown")
         asr_latency = r.get("latency_ms", 0)
@@ -212,29 +223,30 @@ async def process_audio(request: TranscriptionRequest):
         
         logger.info(f"[{call_id}] ASR[{asr_backend}]: '{transcript_text[:80]}...', lang={detected_language}")
 
-    # Step 2: Keyword scan (always runs on the transcript text)
-    keyword_result = await asyncio.to_thread(keyword_engine.scan, transcript_text)
-    logger.info(f"[{call_id}] KEYWORDS: {keyword_result['total_hits']} hits, severity={keyword_result['severity']}")
+    # Run Keywords, NLP, and Emotion analysis concurrently to minimize pipeline latency
+    keyword_task = asyncio.to_thread(keyword_engine.scan, transcript_text)
+    nlp_task = nlp_engine.process(transcript_text, detected_language, dialect_zone="general")
+    
+    if request.audio_base64 and not is_text_input:
+        emotion_task = asyncio.to_thread(emotion_engine.analyze, request.audio_base64)
+    else:
+        emotion_task = None
 
-    # Step 3: NLP processing (pass dialect zone from keywords)
-    nlp_result = await nlp_engine.process(transcript_text, detected_language,
-                                           dialect_zone=keyword_result.get("dialect_zone", "general"))
-    logger.info(f"[{call_id}] NLP: intent={nlp_result.get('intent', {}).get('category')}, urgency={nlp_result.get('urgency')}, dialect={keyword_result.get('dialect_zone')}")
+    if emotion_task:
+        keyword_result, nlp_result, emotion_result = await asyncio.gather(keyword_task, nlp_task, emotion_task)
+    else:
+        keyword_result, nlp_result = await asyncio.gather(keyword_task, nlp_task)
+        emotion_result = _estimate_emotion_from_text(keyword_result, nlp_result, transcript_text)
+
+    # Sync dialect_zone from keywords result into NLP result
+    nlp_result["dialect_zone"] = keyword_result.get("dialect_zone", "general")
+    
+    logger.info(f"[{call_id}] KEYWORDS: {keyword_result['total_hits']} hits, severity={keyword_result['severity']}")
+    logger.info(f"[{call_id}] NLP: intent={nlp_result.get('intent', {}).get('category')}, urgency={nlp_result.get('urgency')}, dialect={nlp_result['dialect_zone']}")
+    logger.info(f"[{call_id}] EMOTION: panic={emotion_result.get('panic')}, fear={emotion_result.get('fear')}")
 
     # Step 3.5: Wire verification — store NLP summary for later confirmation
     verification_engine.set_summary(call_id, nlp_result.get('summary', ''), detected_language)
-
-    # Step 4: Emotion analysis
-    if request.audio_base64 and not is_text_input:
-        # Audio-based emotion analysis
-        emotion_result = await asyncio.to_thread(emotion_engine.analyze, request.audio_base64)
-    elif is_text_input or transcript_text:
-        # Text-based emotion estimation from keywords and NLP
-        emotion_result = _estimate_emotion_from_text(keyword_result, nlp_result, transcript_text)
-    else:
-        emotion_result = {"panic": 0.0, "fear": 0.0, "calm": 0.7, "distress": 0.0}
-    
-    logger.info(f"[{call_id}] EMOTION: panic={emotion_result.get('panic')}, fear={emotion_result.get('fear')}")
 
     # Step 5: UTCS calculation
     utcs_result = utcs_engine.calculate(

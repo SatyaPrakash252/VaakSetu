@@ -266,13 +266,24 @@ class DatabaseEngine:
                  utcs.get("level", "MINIMAL"))
             )
 
-            # Update call UTCS
-            conn.execute(
-                """UPDATE calls SET utcs_score = ?, utcs_level = ?, summary = ?
-                   WHERE call_id = ?""",
-                (utcs.get("score", 0), utcs.get("level", "MINIMAL"),
-                 nlp.get("summary"), call_id)
-            )
+            # Update call UTCS and cache language (if not already set or set to 'auto')
+            detected_language = transcript.get("language")
+            if detected_language and detected_language not in ("unknown", "auto"):
+                conn.execute(
+                    """UPDATE calls 
+                       SET utcs_score = ?, utcs_level = ?, summary = ?,
+                           language = CASE WHEN language IS NULL OR language = 'auto' THEN ? ELSE language END
+                       WHERE call_id = ?""",
+                    (utcs.get("score", 0), utcs.get("level", "MINIMAL"),
+                     nlp.get("summary"), detected_language, call_id)
+                )
+            else:
+                conn.execute(
+                    """UPDATE calls SET utcs_score = ?, utcs_level = ?, summary = ?
+                       WHERE call_id = ?""",
+                    (utcs.get("score", 0), utcs.get("level", "MINIMAL"),
+                     nlp.get("summary"), call_id)
+                )
 
             conn.commit()
             logger.info(f"Saved transcript for {call_id}: {keywords.get('total_hits', 0)} keyword hits, UTCS={utcs.get('score', 0)}")

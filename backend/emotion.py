@@ -72,7 +72,7 @@ class EmotionEngine:
             spectral_centroid = float(librosa.feature.spectral_centroid(y=y, sr=sr).mean())
             mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
             mfcc_var = float(np.var(mfcc, axis=1).mean())  # MFCC variance — emotional variation
-            pitch = librosa.yin(y, fmin=60, fmax=500)
+            pitch = librosa.yin(y, fmin=60, fmax=500, hop_length=2048, frame_length=4096)
             pitch_valid = pitch[~np.isnan(pitch)]
             pitch_mean = float(np.mean(pitch_valid)) if len(pitch_valid) > 0 else 200
             pitch_std = float(np.std(pitch_valid)) if len(pitch_valid) > 0 else 0
