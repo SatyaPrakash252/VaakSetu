@@ -122,7 +122,7 @@ class AIInterpretationEdit(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"service":"VaakSetu","version":"2.0.1","status":"operational"}
+    return {"service":"VaakSetu","version":"2.0.0","status":"operational"}
 
 @app.get("/api/test_reload")
 async def test_reload():

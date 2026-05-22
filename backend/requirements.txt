@@ -1,13 +1,11 @@
-# VaakSetu Backend Dependencies
+# VaakSetu v2.0 Backend Dependencies
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
 websockets==12.0
 python-multipart==0.0.9
 
 # ASR & Audio
-openai-whisper==20231117
 SpeechRecognition==3.10.4
-soundfile==0.12.1
 librosa==0.10.2
 numpy==1.26.4
 scipy==1.13.0
@@ -15,27 +13,13 @@ pydub==0.25.1
 
 # NLP
 anthropic==0.34.0
-ahocorasick-rs==0.22.0
 
 # TTS
 gTTS==2.5.1
 
-# Database
-sqlalchemy==2.0.31
-aiosqlite==0.20.0
-
 # Twilio
 twilio==9.2.0
-
-# ML/Emotion
-scikit-learn==1.5.0
-joblib==1.4.2
-
-# Language Detection
-langdetect==1.0.9
 
 # Utilities
 python-dotenv==1.0.1
 pydantic==2.8.0
-httpx==0.27.0
-aiofiles==24.1.0
