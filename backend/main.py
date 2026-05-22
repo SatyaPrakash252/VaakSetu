@@ -60,7 +60,7 @@ app = FastAPI(
     debug=os.getenv("DEBUG", "false").lower() == "true",
 )
 
-# Restrict CORS to known origins only
+# Restrict CORS to known origins and Vercel preview domains
 allowed_origins = [
     "https://vaak-setu-self.vercel.app",
     "http://localhost:5173",
@@ -70,6 +70,7 @@ allowed_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
