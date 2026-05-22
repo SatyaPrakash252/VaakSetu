@@ -408,15 +408,20 @@ class DatabaseEngine:
 
     def get_table_rows(self, table_name: str, limit: int = 50, offset: int = 0) -> Dict:
         """Get rows from a specific table"""
-        allowed_tables = ["calls", "transcripts", "verification_logs", "feedback_entries", "event_logs"]
+        allowed_tables = ["calls", "transcripts", "verification_logs", "feedback_entries", "event_logs", "sqlite_sequence"]
         if table_name not in allowed_tables:
             return {"error": f"Table '{table_name}' not found. Available: {allowed_tables}"}
         
         conn = self._get_conn()
         try:
+            # Check if 'id' column exists to determine if we can sort by it
+            cols = conn.execute(f"PRAGMA table_info([{table_name}])").fetchall()
+            has_id = any(c["name"] == "id" for c in cols)
+            order_by = "ORDER BY id DESC" if has_id else ""
+            
             total = conn.execute(f"SELECT COUNT(*) FROM [{table_name}]").fetchone()[0]
             rows = conn.execute(
-                f"SELECT * FROM [{table_name}] ORDER BY id DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM [{table_name}] {order_by} LIMIT ? OFFSET ?",
                 (limit, offset)
             ).fetchall()
             return {

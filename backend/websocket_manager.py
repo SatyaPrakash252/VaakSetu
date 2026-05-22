@@ -16,6 +16,10 @@ class WebSocketManager:
         self.message_buffer: List[Dict] = []  # Last 50 messages for reconnecting clients
         self.max_buffer = 50
 
+    @property
+    def connection_count(self) -> int:
+        return len(self.active_connections)
+
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
