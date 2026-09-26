@@ -36,7 +36,7 @@ docker-compose up --build
 - **Dashboard:** http://localhost:5173
 - **API Docs:** http://localhost:8000/docs
 
-### Option 2: Manual
+### Option 2: Manual Operation
 ```bash
 # Backend
 cd backend
